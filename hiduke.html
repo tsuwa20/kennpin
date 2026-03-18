@@ -1,12 +1,13 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
+<link rel="icon" href="icon/favicon.png">
 <meta charset="UTF-8">
 <title>日付検品システム</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 
 <style>
-body { font-family: -apple-system; padding:20px; }
+body { font-family: -apple-system; padding:20px; margin-bottom:80px;}
 #status { padding:20px; font-size:22px; text-align:center; border-radius:10px; margin-bottom:20px;}
 .ok { background:green; color:white;}
 .ng { background:red; color:white;}
@@ -34,36 +35,35 @@ video { width:100%; }
 <h2>日付検品システム</h2>
 
 <div id="status" class="normal">① 日付(YYYYMMDD)を入力</div>
-<input id="manualInput" type="text" maxlength="8" placeholder="例:20260318">
+<input id="manualInput" maxlength="8" placeholder="例:20260318">
 
 <div id="video-container">
-  <video id="camera" autoplay playsinline></video>
+  <video id="v" autoplay playsinline></video>
   <div id="scan-frame"></div>
 </div>
 
-<button id="startScanBtn">📷 読み取り開始</button>
+<button id="scanBtn">📷 読み取り開始</button>
 <button id="resetBtn">🔄 リセット</button>
 
 <script src="js/jsQR.js"></script>
 
 <script>
-// ========= 変数 =========
 let inputDate = "";
 let scanning = false;
 let detected = false;
 
+const video = document.getElementById("v");
+
+/* ===== 音 ===== */
 let audioCtx;
 let soundBuffers = {};
 let audioReady = false;
 
-const video = document.getElementById("camera");
-
-// ========= 音初期化 =========
-async function initAudio(){
-  if (!audioCtx){
+async function initAudio() {
+  if (!audioCtx) {
     audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
-  if (audioCtx.state === "suspended"){
+  if (audioCtx.state === "suspended") {
     await audioCtx.resume();
   }
 
@@ -72,7 +72,7 @@ async function initAudio(){
     ng: "sounds/keikoku.mp3"
   };
 
-  for (const k in files){
+  for (const k in files) {
     const res = await fetch(files[k]);
     const buf = await res.arrayBuffer();
     soundBuffers[k] = await audioCtx.decodeAudioData(buf);
@@ -83,52 +83,56 @@ async function initAudio(){
 
 function playSound(type){
   if (!audioReady || !soundBuffers[type]) return;
-
   const src = audioCtx.createBufferSource();
   src.buffer = soundBuffers[type];
   src.connect(audioCtx.destination);
   src.start(0);
 }
 
-// ========= UI =========
-function setStatus(text, type="normal"){
+/* ===== UI ===== */
+function setStatus(text,type="normal"){
   const s = document.getElementById("status");
   s.textContent = text;
   s.className = type;
 }
 
-// ========= 入力 =========
+/* ===== 入力 ===== */
 document.getElementById("manualInput").addEventListener("input", e=>{
   let v = e.target.value;
 
   if (!/^\d*$/.test(v)){
-    setStatus("❌ 数字のみ入力", "ng");
+    setStatus("❌ 数字のみ", "ng");
     inputDate="";
     return;
   }
 
   if (v.length !== 8){
-    setStatus("❌ 8桁で入力（YYYYMMDD）", "ng");
+    setStatus("❌ 8桁入力", "ng");
     inputDate="";
     return;
   }
 
   inputDate = v;
-  setStatus("② QRコードを読み取ってください","normal");
+  setStatus("② QRを読み取ってください","normal");
 });
 
-// ========= カメラ =========
-async function startScan(){
+/* ===== カメラ ===== */
+async function scan(){
   if (!inputDate) return alert("日付を入力してください");
 
-  await initAudio(); // ★重要
+  await initAudio();
 
   if (scanning) return;
   scanning = true;
   detected = false;
 
   const stream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode:"environment" }
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ zoom: 2 }]
+    }
   });
 
   video.srcObject = stream;
@@ -137,22 +141,34 @@ async function startScan(){
 
 function stopCamera(){
   scanning = false;
-  if (video.srcObject){
+  if (video.srcObject)
     video.srcObject.getTracks().forEach(t=>t.stop());
-  }
+  video.srcObject = null;
 }
 
-// ========= QR =========
+/* ===== QRスキャン（←ここが重要） ===== */
 function scanLoop(){
   if (!scanning || detected) return;
 
+  const frame = document.getElementById("scan-frame").getBoundingClientRect();
+  const rect  = video.getBoundingClientRect();
+
   const canvas = document.createElement("canvas");
+  canvas.width = frame.width;
+  canvas.height = frame.height;
   const ctx = canvas.getContext("2d");
 
-  canvas.width = video.videoWidth;
-  canvas.height = video.videoHeight;
+  const scaleX = video.videoWidth / rect.width;
+  const scaleY = video.videoHeight / rect.height;
 
-  ctx.drawImage(video,0,0);
+  ctx.drawImage(
+    video,
+    (frame.left - rect.left) * scaleX,
+    (frame.top - rect.top) * scaleY,
+    frame.width * scaleX,
+    frame.height * scaleY,
+    0,0,canvas.width,canvas.height
+  );
 
   const img = ctx.getImageData(0,0,canvas.width,canvas.height);
   const qr = jsQR(img.data, canvas.width, canvas.height);
@@ -166,11 +182,11 @@ function scanLoop(){
   }
 }
 
-// ========= 判定 =========
+/* ===== 判定 ===== */
 function compare(scanned){
 
   if (scanned.length < 24){
-    setStatus("❌ QRが短すぎ", "ng");
+    setStatus("❌ QRが短い","ng");
     playSound("ng");
     return;
   }
@@ -179,36 +195,36 @@ function compare(scanned){
   const qrDate = scanned.substr(start, 8);
 
   if (!/^\d{8}$/.test(qrDate)){
-    setStatus("❌ 日付取得失敗", "ng");
+    setStatus("❌ 日付取得失敗","ng");
     playSound("ng");
     return;
   }
 
   if (qrDate >= inputDate){
-    setStatus(`✔ OK (${qrDate})`, "ok");
-    playSound("ok"); // ★ここ
+    setStatus(`✔ OK (${qrDate})`,"ok");
+    playSound("ok");
   } else {
-    setStatus(`❌ NG (${qrDate})`, "ng");
-    playSound("ng"); // ★ここ
+    setStatus(`❌ NG (${qrDate})`,"ng");
+    playSound("ng");
   }
 }
 
-// ========= ボタン =========
-document.getElementById("startScanBtn").addEventListener("click", startScan);
+/* ===== ボタン ===== */
+scanBtn.onclick = scan;
 
-document.getElementById("resetBtn").addEventListener("click", ()=>{
+resetBtn.onclick = ()=>{
   stopCamera();
   inputDate="";
   scanning=false;
   detected=false;
   document.getElementById("manualInput").value="";
-  setStatus("① 日付(YYYYMMDD)を入力","normal");
-});
+  setStatus("① 日付入力","normal");
+};
 
-// ========= スリープ復帰 =========
+/* ===== スリープ復帰 ===== */
 document.addEventListener("visibilitychange", async ()=>{
   if (document.visibilityState === "visible"){
-    audioReady = false;
+    audioReady=false;
     await initAudio();
   }
 });
