@@ -1,0 +1,218 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<title>日付検品システム</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+<style>
+body { font-family: -apple-system; padding:20px; }
+#status { padding:20px; font-size:22px; text-align:center; border-radius:10px; margin-bottom:20px;}
+.ok { background:green; color:white;}
+.ng { background:red; color:white;}
+.normal { background:#eee;}
+
+input { width:90%; font-size:24px; padding:15px; margin-bottom:20px; }
+button { width:100%; font-size:20px; padding:15px; margin-top:10px; }
+
+#video-container { position: relative; max-width:400px; margin:auto; }
+video { width:100%; }
+
+#scan-frame {
+  width:220px;
+  height:220px;
+  border:3px solid red;
+  position:absolute;
+  top:50%; left:50%;
+  transform:translate(-50%,-50%);
+}
+</style>
+</head>
+
+<body>
+
+<h2>日付検品システム</h2>
+
+<div id="status" class="normal">① 日付(YYYYMMDD)を入力</div>
+<input id="manualInput" type="text" maxlength="8" placeholder="例:20260318">
+
+<div id="video-container">
+  <video id="camera" autoplay playsinline></video>
+  <div id="scan-frame"></div>
+</div>
+
+<button id="startScanBtn">📷 読み取り開始</button>
+<button id="resetBtn">🔄 リセット</button>
+
+<script src="js/jsQR.js"></script>
+
+<script>
+// ========= 変数 =========
+let inputDate = "";
+let scanning = false;
+let detected = false;
+
+let audioCtx;
+let soundBuffers = {};
+let audioReady = false;
+
+const video = document.getElementById("camera");
+
+// ========= 音初期化 =========
+async function initAudio(){
+  if (!audioCtx){
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended"){
+    await audioCtx.resume();
+  }
+
+  const files = {
+    ok: "sounds/seikou.mp3",
+    ng: "sounds/keikoku.mp3"
+  };
+
+  for (const k in files){
+    const res = await fetch(files[k]);
+    const buf = await res.arrayBuffer();
+    soundBuffers[k] = await audioCtx.decodeAudioData(buf);
+  }
+
+  audioReady = true;
+}
+
+function playSound(type){
+  if (!audioReady || !soundBuffers[type]) return;
+
+  const src = audioCtx.createBufferSource();
+  src.buffer = soundBuffers[type];
+  src.connect(audioCtx.destination);
+  src.start(0);
+}
+
+// ========= UI =========
+function setStatus(text, type="normal"){
+  const s = document.getElementById("status");
+  s.textContent = text;
+  s.className = type;
+}
+
+// ========= 入力 =========
+document.getElementById("manualInput").addEventListener("input", e=>{
+  let v = e.target.value;
+
+  if (!/^\d*$/.test(v)){
+    setStatus("❌ 数字のみ入力", "ng");
+    inputDate="";
+    return;
+  }
+
+  if (v.length !== 8){
+    setStatus("❌ 8桁で入力（YYYYMMDD）", "ng");
+    inputDate="";
+    return;
+  }
+
+  inputDate = v;
+  setStatus("② QRコードを読み取ってください","normal");
+});
+
+// ========= カメラ =========
+async function startScan(){
+  if (!inputDate) return alert("日付を入力してください");
+
+  await initAudio(); // ★重要
+
+  if (scanning) return;
+  scanning = true;
+  detected = false;
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: { facingMode:"environment" }
+  });
+
+  video.srcObject = stream;
+  requestAnimationFrame(scanLoop);
+}
+
+function stopCamera(){
+  scanning = false;
+  if (video.srcObject){
+    video.srcObject.getTracks().forEach(t=>t.stop());
+  }
+}
+
+// ========= QR =========
+function scanLoop(){
+  if (!scanning || detected) return;
+
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  canvas.width = video.videoWidth;
+  canvas.height = video.videoHeight;
+
+  ctx.drawImage(video,0,0);
+
+  const img = ctx.getImageData(0,0,canvas.width,canvas.height);
+  const qr = jsQR(img.data, canvas.width, canvas.height);
+
+  if (qr){
+    detected = true;
+    stopCamera();
+    compare(qr.data);
+  } else {
+    requestAnimationFrame(scanLoop);
+  }
+}
+
+// ========= 判定 =========
+function compare(scanned){
+
+  if (scanned.length < 24){
+    setStatus("❌ QRが短すぎ", "ng");
+    playSound("ng");
+    return;
+  }
+
+  const start = scanned.length - 24;
+  const qrDate = scanned.substr(start, 8);
+
+  if (!/^\d{8}$/.test(qrDate)){
+    setStatus("❌ 日付取得失敗", "ng");
+    playSound("ng");
+    return;
+  }
+
+  if (qrDate >= inputDate){
+    setStatus(`✔ OK (${qrDate})`, "ok");
+    playSound("ok"); // ★ここ
+  } else {
+    setStatus(`❌ NG (${qrDate})`, "ng");
+    playSound("ng"); // ★ここ
+  }
+}
+
+// ========= ボタン =========
+document.getElementById("startScanBtn").addEventListener("click", startScan);
+
+document.getElementById("resetBtn").addEventListener("click", ()=>{
+  stopCamera();
+  inputDate="";
+  scanning=false;
+  detected=false;
+  document.getElementById("manualInput").value="";
+  setStatus("① 日付(YYYYMMDD)を入力","normal");
+});
+
+// ========= スリープ復帰 =========
+document.addEventListener("visibilitychange", async ()=>{
+  if (document.visibilityState === "visible"){
+    audioReady = false;
+    await initAudio();
+  }
+});
+</script>
+
+</body>
+</html>
