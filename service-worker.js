@@ -1,10 +1,11 @@
-const CACHE_NAME = "qr-check-V10";
+const CACHE_NAME = "qr-check-V11";
 
 const URLS_TO_CACHE = [
   "./",
   "./index.html",
   "./tenyuryoku.html",   // ← 手入力検品
   "./scan.html",         // ← 海外ラベル
+  "./gennpin.html",      // ← 現品票読み取り
 
   "./js/jsQR.js",
   "./js/zxing.min.js",
