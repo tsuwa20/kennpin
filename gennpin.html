@@ -349,7 +349,7 @@ function handleScan(code) {
 
     updateDisplay();
 
-    setStatus("2枚目のQRコードを読み込んでください");
+    setStatus("基準QR登録完了。2枚目のQRコードを読み込んでください");
 
     step = 2;
 
@@ -386,18 +386,18 @@ function handleScan(code) {
 
     loadHistory();
 
-    /* 次回用にリセット */
-    setTimeout(() => {
+/* 次回も同じ1枚目を使用 */
+setTimeout(() => {
 
-      step = 1;
-      firstCode = "";
-      secondCode = "";
+  secondCode = "";
 
-      updateDisplay();
+  updateDisplay();
 
-      setStatus("1枚目のQRコードを読み込んでください");
+  setStatus("続けてQRコードを読み込んでください");
 
-    }, 2000);
+  step = 2;
+
+}, 1500);
   }
 }
 
