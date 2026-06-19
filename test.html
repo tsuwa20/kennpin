@@ -1,243 +1,324 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>海外ラベル貼り検品</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<link rel="icon" href="icon/favicon.png" type="image/png">
+<link rel="apple-touch-icon" href="icon/icon-180.png">
+<link rel="manifest" href="manifest.webmanifest">
+
+<meta charset="UTF-8" />
+<title>QRコード検品</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <style>
-body { font-family:-apple-system,BlinkMacSystemFont; padding:20px; margin-bottom:80px; }
-#status { padding:20px; font-size:24px; font-weight:bold; border-radius:12px; text-align:center; margin-bottom:10px; }
-.ok { background:green; color:white; }
-.ng { background:red; color:white; }
-.normal { background:#e5e5e5; color:#0066cc; }
+body { font-family: -apple-system, BlinkMacSystemFont; padding: 20px; margin-bottom:80px;}
+#status { padding: 20px; font-size: 24px; font-weight: bold; border-radius: 12px; text-align: center; margin-bottom: 20px; }
+.ok { background: green; color: white; }
+.ng { background: red; color: white; }
+.normal { background: #e5e5e5; color: #0066cc; }
 
-#firstCodeDisplay { font-size:20px; margin-bottom:20px; font-weight:bold; }
+button { width: 100%; font-size: 20px; padding: 15px; margin-top: 10px; border-radius: 10px; }
 
-#video-container { position:relative; width:100%; max-width:400px; margin:auto; }
-#interactive { position:relative; width:100%; }
-#interactive video { width:100%; border-radius:10px; }
+table { width: 100%; margin-top: 20px; border-collapse: collapse; }
+th, td { border-bottom: 1px solid #ddd; padding: 6px; }
+
+#video-container { position: relative; width: 100%; max-width: 400px; margin: auto; }
+video { width: 100%; border-radius: 10px; }
 
 #scan-frame {
-  width:260px; height:160px;
-  border:3px solid rgba(255,0,0,.8);
-  position:absolute;
-  top:50%; left:50%;
-  transform:translate(-50%,-50%);
-  pointer-events:none;
-  border-radius:10px;
-  z-index:10;
+  width: 220px;
+  height: 220px;
+  border: 3px solid rgba(255,0,0,0.8);
+  position: absolute;
+  top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+  border-radius: 10px;
 }
-
-button { width:100%; font-size:20px; padding:15px; margin-top:20px; border-radius:10px; }
-
-table { width:100%; margin-top:20px; border-collapse:collapse; }
-th,td { border-bottom:1px solid #ddd; padding:8px; }
 
 .navbar {
-  position:fixed; bottom:0; left:0;
-  width:100%; background:#f3f3f3;
+  position:fixed;
+  bottom:0;
+  left:0;
+  width:100%;
+  background:#f3f3f3;
   border-top:2px solid #ccc;
   display:flex;
+  justify-content:space-around;
 }
 .navbar a {
-  flex:1; text-align:center;
-  padding:15px 0; font-size:18px;
-  text-decoration:none; color:#333;
+  flex:1;
+  text-align:center;
+  padding:15px 0;
+  font-size:15px;
+  text-decoration:none;
+  color:#333;
 }
 .navbar a.active {
-  background:#0078ff; color:white; font-weight:bold;
+  background:#0078ff;
+  color:white;
+  font-weight:bold;
 }
 </style>
 </head>
-
 <body>
 
-<h2>海外ラベル貼り検品</h2>
-
-<div id="status" class="normal">海外パーツラベルの品番を読み取ってください</div>
-<div id="firstCodeDisplay"></div>
+<h2>QRコード検品</h2>
+<div id="status" class="normal">現品票のQRを読み込んでください</div>
 
 <div id="video-container">
-  <div id="interactive"></div>
+  <video id="v" autoplay playsinline></video>
   <div id="scan-frame"></div>
 </div>
 
-<button id="scanBtn">📷 バーコードを読み取る</button>
+<button id="scanBtn">📷 QRコードを読み取る</button>
 <button id="resetBtn">🔄 最初に戻る</button>
-<button id="csvBtn">📄 CSV出力</button>
+<button id="exportBtn">📁 CSV出力</button>
 
-<h3>履歴（最新5件）</h3>
+<h3>履歴</h3>
 <table id="history"></table>
 
 <div class="navbar">
-  <a href="index.html">📷 QR検品</a>
+  <a href="index.html" class="active">📷 QR検品</a>
   <a href="tenyuryoku.html">⌨ 手入力検品</a>
-  <a href="scan.html" class="active">🏷️ 海外ラベル</a>
+  <a href="scan.html">🏷️ 海外ラベル</a>
+  <a href="gennpin.html">🎟️ 現品票検品</a>
 </div>
 
-<!-- QuaggaJS -->
-<script src="https://unpkg.com/quagga@0.12.1/dist/quagga.min.js"></script>
+<script src="js/jsQR.js"></script>
 
 <script>
-// ================= IndexedDB =================
+let step = 1;
+let firstCode1 = "";
+let firstCode2 = "";
+let scanning = false;
+let detected = false;
+
+/* ===== AudioContext管理 ===== */
+let audioCtx;
+let soundBuffers = {};
+let audioReady = false;
+
+async function initAudio() {
+  if (!audioCtx) {
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  }
+  if (audioCtx.state === "suspended") {
+    await audioCtx.resume();
+  }
+
+  const files = {
+    read: "sounds/yomitori.mp3",
+    success: "sounds/seikou.mp3",
+    error: "sounds/keikoku.mp3"
+  };
+
+  for (const key in files) {
+    const res = await fetch(files[key]);
+    const arrayBuffer = await res.arrayBuffer();
+    soundBuffers[key] = await audioCtx.decodeAudioData(arrayBuffer);
+  }
+
+  audioReady = true;
+}
+
+function playSound(type) {
+  if (!audioReady || !soundBuffers[type]) return;
+  const src = audioCtx.createBufferSource();
+  src.buffer = soundBuffers[type];
+  src.connect(audioCtx.destination);
+  src.start(0);
+}
+
+/* ===== IndexedDB ===== */
 let db;
-const req=indexedDB.open("barcodeDB",1);
-req.onupgradeneeded=e=>{
-  db=e.target.result;
-  db.createObjectStore("records",{keyPath:"id",autoIncrement:true});
+const req = indexedDB.open("checksDB", 1);
+req.onupgradeneeded = e => {
+  db = e.target.result;
+  db.createObjectStore("checks", { keyPath: "id", autoIncrement: true });
 };
-req.onsuccess=e=>{
-  db=e.target.result;
+req.onsuccess = e => {
+  db = e.target.result;
   loadHistory();
 };
 
-// ================= 音 =================
-const readSound=new Audio("sounds/yomitori.mp3");
-const successSound=new Audio("sounds/seikou.mp3");
-const errorSound=new Audio("sounds/keikoku.mp3");
-
-// ================= 変数 =================
-let step=1;
-let firstCode="";
-let scanning=false;
-
-// ================= 表示 =================
-function setStatus(t,c="normal"){
-  status.textContent=t;
-  status.className=c;
+function setStatus(text, type="normal") {
+  const s = document.getElementById("status");
+  s.textContent = text;
+  s.className = type;
 }
 
-// ================= スキャン開始 =================
-function startScan(){
-  if(scanning) return;
-  scanning=true;
+const video = document.getElementById("v");
 
-  Quagga.init({
-    inputStream:{
-      type:"LiveStream",
-      target:document.querySelector("#interactive"),
-      constraints:{
-        facingMode:"environment",
-        width:640,
-        height:480
-      }
-    },
-    locator:{ patchSize:"medium", halfSample:true },
-    decoder:{
-      readers:[
-        "code_128_reader",
-        "ean_reader",
-        "ean_8_reader",
-        "code_39_reader",
-        "itf_reader"
-      ]
-    },
-    locate:true
-  },err=>{
-    if(err){
-      alert("カメラ起動失敗："+err);
-      scanning=false;
-      return;
+/* ===== カメラ起動 ===== */
+async function scan() {
+  if (scanning) return;
+  scanning = true;
+  detected = false;
+
+  const stream = await navigator.mediaDevices.getUserMedia({
+    video: {
+      facingMode: { ideal: "environment" },
+      width: { ideal: 1920 },
+      height: { ideal: 1080 },
+      advanced: [{ zoom: 2 }]
     }
-    Quagga.start();
   });
 
-  Quagga.onDetected(onDetected);
+  video.srcObject = stream;
+  requestAnimationFrame(scanLoop);
 }
 
-// ================= 読み取り =================
-function onDetected(result){
-  const code=result.codeResult.code;
-  if(!code) return;
+/* ===== スキャン ===== */
+function scanLoop() {
+  if (!scanning || detected) return;
 
-  Quagga.offDetected(onDetected);
-  Quagga.stop();
-  scanning=false;
+  const frame = document.getElementById("scan-frame").getBoundingClientRect();
+  const rect  = video.getBoundingClientRect();
 
-  handleScan(code);
+  const canvas = document.createElement("canvas");
+  canvas.width = frame.width;
+  canvas.height = frame.height;
+  const ctx = canvas.getContext("2d");
+
+  const scaleX = video.videoWidth / rect.width;
+  const scaleY = video.videoHeight / rect.height;
+
+  ctx.drawImage(
+    video,
+    (frame.left - rect.left) * scaleX,
+    (frame.top - rect.top) * scaleY,
+    frame.width * scaleX,
+    frame.height * scaleY,
+    0,0,canvas.width,canvas.height
+  );
+
+  const img = ctx.getImageData(0,0,canvas.width,canvas.height);
+  const qr = jsQR(img.data, canvas.width, canvas.height);
+
+  if (qr) {
+    detected = true;
+    stopCamera();
+    handleScan(qr.data);
+  } else {
+    requestAnimationFrame(scanLoop);
+  }
 }
 
-// ================= 判定 =================
-function handleScan(code){
-  readSound.play();
-  const v=code.trim();
+function stopCamera() {
+  scanning = false;
+  if (video.srcObject)
+    video.srcObject.getTracks().forEach(t => t.stop());
+  video.srcObject = null;
+}
 
-  if(step===1){
-    if(v.length>7){
-      errorSound.play();
-      setStatus("❌ 1回目は7文字以下","ng");
+let firstFullCode = "";
+
+/* ===== 判定 ===== */
+function handleScan(code) {
+  playSound("read");
+
+  if (step === 1) {
+    if (code.length < 29) {
+      setStatus("バーコードが短すぎます", "ng");
       return;
     }
-    firstCode=v;
-    firstCodeDisplay.textContent="1回目のコード : "+v;
-    setStatus("海外パーツラベルの品番を読み取ってください");
-    step=2;
+
+    // 1回目のQRコード全体を保存
+    firstFullCode = code;
+
+    setStatus("パーツラベルのQRコードを読んでください");
+    step = 2;
     return;
   }
 
-  if(step===2){
-    const ok=v.includes(firstCode);
-    setStatus(ok?"✔ 一致しました！":"❌ 不一致です",ok?"ok":"ng");
-    saveHistory(firstCode,v,ok?"OK":"NG");
-    scanBtn.style.display="none";
-    step=3;
+  if (step === 2) {
+    // 33文字目以降を取得
+    const secondCode = code.substring(33);
+
+    // 1回目のQRコード内に含まれているか判定
+    const ok = firstFullCode.includes(secondCode);
+
+    if (ok) {
+      setStatus("✔ 一致しました！", "ok");
+      playSound("success");
+    } else {
+      setStatus("❌ 不一致です", "ng");
+      playSound("error");
+    }
+
+    saveResult(firstFullCode, secondCode, ok ? "OK" : "NG");
+    loadHistory();
   }
 }
-
-// ================= リセット =================
-function resetAll(){
-  if(scanning){
-    Quagga.stop();
-    scanning=false;
-  }
-  step=1;
-  firstCode="";
-  setStatus("海外パーツラベルの品番を読み取ってください");
-  firstCodeDisplay.textContent="";
-  scanBtn.style.display="block";
-}
-
-// ================= 履歴 =================
-function saveHistory(first,second,result){
-  const tx=db.transaction("records","readwrite");
-  tx.objectStore("records").add({
-    time:new Date().toLocaleString(),
-    first,second,result
+  
+/* ===== DB ===== */
+function saveResult(first, second, result) {
+  const tx = db.transaction("checks","readwrite");
+  tx.objectStore("checks").add({
+    time: new Date().toLocaleString(),
+    first, second, result
   });
-  tx.oncomplete=loadHistory;
 }
 
-function loadHistory(){
-  const tx=db.transaction("records","readonly");
-  const r=tx.objectStore("records").getAll();
-  r.onsuccess=()=>{
-    history.innerHTML="<tr><th>時刻</th><th>1回目</th><th>2回目</th><th>結果</th></tr>";
-    r.result.slice(-5).reverse().forEach(d=>{
-      history.innerHTML+=`<tr><td>${d.time}</td><td>${d.first}</td><td>${d.second}</td><td>${d.result}</td></tr>`;
+function loadHistory() {
+  const tx = db.transaction("checks","readonly");
+  const req = tx.objectStore("checks").getAll();
+  req.onsuccess = () => {
+    const table = document.getElementById("history");
+    table.innerHTML = "<tr><th>時刻</th><th>1回目</th><th>2回目</th><th>結果</th></tr>";
+    req.result.reverse().slice(0,5).forEach(r=>{
+      table.innerHTML += `<tr><td>${r.time}</td><td>${r.first}</td><td>${r.second}</td><td>${r.result}</td></tr>`;
     });
   };
 }
 
-// ================= CSV =================
-csvBtn.onclick=()=>{
-  const tx=db.transaction("records","readonly");
-  const r=tx.objectStore("records").getAll();
-  r.onsuccess=()=>{
-    let csv="時刻,1回目,2回目,結果\n";
-    r.result.forEach(d=>{
-      csv+=`${d.time},${d.first},${d.second},${d.result}\n`;
+function resetAll() {
+  step = 1;
+  firstCode1 = "";
+  firstCode2 = "";
+  setStatus("現品票のQRを読み込んでください");
+}
+
+/* ===== CSV ===== */
+function exportCSV() {
+  const tx = db.transaction("checks","readonly");
+  const req = tx.objectStore("checks").getAll();
+  req.onsuccess = () => {
+    let csv = "時刻,1回目,2回目,結果\n";
+    req.result.forEach(r=>{
+      csv += `${r.time},${r.first},${r.second},${r.result}\n`;
     });
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-    a.download="barcode_history.csv";
+    const blob = new Blob([csv],{type:"text/csv"});
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "検品履歴.csv";
     a.click();
   };
-};
+}
 
-scanBtn.onclick=startScan;
-resetBtn.onclick=resetAll;
+/* ===== イベント ===== */
+scanBtn.onclick = async () => {
+  await initAudio();
+  scan();
+};
+resetBtn.onclick = resetAll;
+exportBtn.onclick = exportCSV;
+
+/* ===== スリープ復帰対策 ===== */
+document.addEventListener("visibilitychange", async () => {
+  if (document.visibilityState === "visible") {
+    audioReady = false;
+    await initAudio();
+  }
+});
+</script>
+
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js");
+}
 </script>
 
 </body>
 </html>
+
