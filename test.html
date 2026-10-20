@@ -211,20 +211,20 @@ function stopCamera() {
   video.srcObject = null;
 }
 
-let firstFullCode = "";
 
 /* ===== 判定 ===== */
 function handleScan(code) {
   playSound("read");
 
   if (step === 1) {
+    // 1回目：現品票のQRコードを読み取る
     if (code.length < 29) {
       setStatus("バーコードが短すぎます", "ng");
       return;
     }
 
     // 1回目のQRコード全体を保存
-    firstFullCode = code;
+    firstCode1 = code;
 
     setStatus("パーツラベルのQRコードを読んでください");
     step = 2;
@@ -232,11 +232,14 @@ function handleScan(code) {
   }
 
   if (step === 2) {
-    // 33文字目以降を取得
-    const secondCode = code.substring(33);
+    // 2回目：33文字目以降を取得
+    // substring(32) は33文字目から末尾まで
+    const secondCode = code.substring(32);
 
-    // 1回目のQRコード内に含まれているか判定
-    const ok = firstFullCode.includes(secondCode);
+    // 2回目の33文字目以降の文字列が
+    // 1回目のQRコード全体に含まれているか判定
+    const ok = secondCode.length > 0 &&
+               firstCode1.includes(secondCode);
 
     if (ok) {
       setStatus("✔ 一致しました！", "ok");
@@ -246,11 +249,13 @@ function handleScan(code) {
       playSound("error");
     }
 
-    saveResult(firstFullCode, secondCode, ok ? "OK" : "NG");
+    // 検品結果を保存
+    saveResult(firstCode1, secondCode, ok ? "OK" : "NG");
     loadHistory();
   }
 }
-  
+
+
 /* ===== DB ===== */
 function saveResult(first, second, result) {
   const tx = db.transaction("checks","readwrite");
@@ -321,4 +326,3 @@ if ("serviceWorker" in navigator) {
 
 </body>
 </html>
-
