@@ -322,6 +322,7 @@ function normalizeCode(code) {
   return code.replace(/\s/g, "");
 }
 
+
 /* ===== 判定 ===== */
 function handleScan(code) {
   playSound("read");
@@ -330,6 +331,7 @@ function handleScan(code) {
     // 1回目：現品票のQRコードを読み取る
     if (code.length < 29) {
       setStatus("バーコードが短すぎます", "ng");
+      playSound("error");
       return;
     }
 
@@ -345,17 +347,38 @@ function handleScan(code) {
   }
 
   if (step === 2) {
+    // 2回目のQRコード全体から空白を除去
+    const secondCodeNormalized = normalizeCode(code);
+
+    // 1回目と2回目の全データが同じか判定
+    const duplicate =
+      firstCodeNormalized === secondCodeNormalized;
+
+    if (duplicate) {
+      // 重複エラー
+      setStatus("⚠ 重複エラーです", "ng");
+      playSound("error");
+
+      saveResult(
+        firstCode1,
+        code,
+        "重複"
+      );
+
+      loadHistory();
+      return;
+    }
+
     // 2回目：34文字目以降を取得
-    // substring(33) は34文字目から末尾まで
     const secondCode = code.substring(33);
 
-    // 2回目の取得部分から空白をすべて除去
-    const secondCodeNormalized = normalizeCode(secondCode);
+    // 取得部分から空白をすべて除去
+    const secondPartNormalized = normalizeCode(secondCode);
 
-    // 空白除去後の文字列が1回目に含まれるか判定
+    // 1回目のデータに含まれるか判定
     const ok =
-      secondCodeNormalized.length > 0 &&
-      firstCodeNormalized.includes(secondCodeNormalized);
+      secondPartNormalized.length > 0 &&
+      firstCodeNormalized.includes(secondPartNormalized);
 
     if (ok) {
       setStatus("✔ 一致しました！", "ok");
@@ -365,7 +388,7 @@ function handleScan(code) {
       playSound("error");
     }
 
-    // 履歴には読み取った元データを保存
+    // 履歴に保存
     saveResult(
       firstCode1,
       secondCode,
@@ -375,6 +398,7 @@ function handleScan(code) {
     loadHistory();
   }
 }
+
 
 /* ===== DB保存 ===== */
 function saveResult(first, second, result) {
