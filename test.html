@@ -2,13 +2,13 @@
 <!DOCTYPE html>
 <html lang="ja">
 <head>
-<meta charset="UTF-8">
-<title>QRコード検品</title>
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-
 <link rel="icon" href="icon/favicon.png" type="image/png">
 <link rel="apple-touch-icon" href="icon/icon-180.png">
 <link rel="manifest" href="manifest.webmanifest">
+
+<meta charset="UTF-8" />
+<title>QRコード検品</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <style>
 body {
@@ -26,20 +26,9 @@ body {
   margin-bottom: 20px;
 }
 
-.ok {
-  background: green;
-  color: white;
-}
-
-.ng {
-  background: red;
-  color: white;
-}
-
-.normal {
-  background: #e5e5e5;
-  color: #0066cc;
-}
+.ok { background: green; color: white; }
+.ng { background: red; color: white; }
+.normal { background: #e5e5e5; color: #0066cc; }
 
 button {
   width: 100%;
@@ -53,13 +42,12 @@ table {
   width: 100%;
   margin-top: 20px;
   border-collapse: collapse;
-  overflow-wrap: anywhere;
 }
 
 th, td {
   border-bottom: 1px solid #ddd;
   padding: 6px;
-  text-align: left;
+  overflow-wrap: anywhere;
 }
 
 #video-container {
@@ -146,15 +134,21 @@ video {
 
 <script>
 let step = 1;
+
+// 1回目のQRコード（元データ）
 let firstCode1 = "";
+
+// 1回目のQRコード（空白除去後）
+let firstCodeNormalized = "";
+
 let scanning = false;
 let detected = false;
 
+/* ===== AudioContext管理 ===== */
 let audioCtx;
 let soundBuffers = {};
 let audioReady = false;
 
-/* ===== 音声初期化 ===== */
 async function initAudio() {
   if (!audioCtx) {
     audioCtx = new (
@@ -178,13 +172,10 @@ async function initAudio() {
     const res = await fetch(files[key]);
 
     if (!res.ok) {
-      throw new Error(
-        "音声ファイルを読み込めません: " + files[key]
-      );
+      throw new Error("音声ファイルの読み込みに失敗: " + files[key]);
     }
 
     const arrayBuffer = await res.arrayBuffer();
-
     soundBuffers[key] =
       await audioCtx.decodeAudioData(arrayBuffer);
   }
@@ -263,21 +254,16 @@ async function scan() {
 
   } catch (err) {
     scanning = false;
-
-    setStatus(
-      "カメラを起動できません。設定を確認してください",
-      "ng"
-    );
-
+    setStatus("カメラを起動できません。設定を確認してください", "ng");
     console.error(err);
   }
 }
 
-/* ===== QRコード読み取り ===== */
+/* ===== スキャン ===== */
 function scanLoop() {
   if (!scanning || detected) return;
 
-  if (video.readyState < 2 || !video.videoWidth) {
+  if (!video.videoWidth || !video.videoHeight) {
     requestAnimationFrame(scanLoop);
     return;
   }
@@ -288,8 +274,8 @@ function scanLoop() {
   const rect = video.getBoundingClientRect();
 
   const canvas = document.createElement("canvas");
-  canvas.width = Math.max(1, Math.round(frame.width));
-  canvas.height = Math.max(1, Math.round(frame.height));
+  canvas.width = Math.round(frame.width);
+  canvas.height = Math.round(frame.height);
 
   const ctx = canvas.getContext("2d");
 
@@ -302,10 +288,7 @@ function scanLoop() {
     (frame.top - rect.top) * scaleY,
     frame.width * scaleX,
     frame.height * scaleY,
-    0,
-    0,
-    canvas.width,
-    canvas.height
+    0, 0, canvas.width, canvas.height
   );
 
   const img = ctx.getImageData(
@@ -333,44 +316,10 @@ function stopCamera() {
   video.srcObject = null;
 }
 
-/* ===== 比較用データの正規化 ===== */
-function normalizeCode(value) {
-  return value
-    .normalize("NFKC")
-    .replace(/\s+/g, "")
-    .toUpperCase();
-}
-
-/* ===== 共通する最長文字列を検索 ===== */
-function findCommonPart(first, second) {
-  let longest = "";
-
-  // 動的計画法で最長共通部分文字列を検索
-  // 文字が連続して一致する部分を探す
-  const previous = new Array(second.length + 1).fill(0);
-
-  for (let i = 1; i <= first.length; i++) {
-    const current = new Array(second.length + 1).fill(0);
-
-    for (let j = 1; j <= second.length; j++) {
-      if (first[i - 1] === second[j - 1]) {
-        current[j] = previous[j - 1] + 1;
-
-        if (current[j] > longest.length) {
-          longest = first.substring(
-            i - current[j],
-            i
-          );
-        }
-      }
-    }
-
-    for (let j = 0; j <= second.length; j++) {
-      previous[j] = current[j];
-    }
-  }
-
-  return longest;
+/* ===== 空白除去 ===== */
+function normalizeCode(code) {
+  // 半角スペース、全角スペース、タブ、改行などを除去
+  return code.replace(/\s/g, "");
 }
 
 /* ===== 判定 ===== */
@@ -378,65 +327,48 @@ function handleScan(code) {
   playSound("read");
 
   if (step === 1) {
-    // 1回目：現品票のQRコード全体を保存
-    if (code.trim().length < 29) {
+    // 1回目：現品票のQRコードを読み取る
+    if (code.length < 29) {
       setStatus("バーコードが短すぎます", "ng");
-      playSound("error");
       return;
     }
 
+    // 元データを保存
     firstCode1 = code;
 
-    setStatus("パーツラベルのQRコードを読んでください");
+    // 空白をすべて除去したデータを作成
+    firstCodeNormalized = normalizeCode(code);
 
+    setStatus("パーツラベルのQRコードを読んでください");
     step = 2;
     return;
   }
 
   if (step === 2) {
-    const normalizedFirst = normalizeCode(firstCode1);
-    const normalizedSecond = normalizeCode(code);
+    // 2回目：34文字目以降を取得
+    // substring(33) は34文字目から末尾まで
+    const secondCode = code.substring(33);
 
-    // ① 同じQRコードを2回読み取った場合は重複エラー
-    if (normalizedFirst === normalizedSecond) {
-      setStatus("⚠ 重複エラー：同じバーコードです", "ng");
-      playSound("error");
+    // 2回目の取得部分から空白をすべて除去
+    const secondCodeNormalized = normalizeCode(secondCode);
 
-      saveResult(firstCode1, code, "重複エラー");
-      loadHistory();
-      return;
-    }
-
-    // ② 異なるQRコードの場合は、共通する文字列を探す
-    const commonPart = findCommonPart(
-      normalizedFirst,
-      normalizedSecond
-    );
-
-    // 10文字以上の連続一致を合格条件とする
-    const MIN_MATCH_LENGTH = 10;
-
-    const ok = commonPart.length >= MIN_MATCH_LENGTH;
+    // 空白除去後の文字列が1回目に含まれるか判定
+    const ok =
+      secondCodeNormalized.length > 0 &&
+      firstCodeNormalized.includes(secondCodeNormalized);
 
     if (ok) {
-      setStatus(
-        "✔ 一致しました！\n一致部分：" + commonPart,
-        "ok"
-      );
-
+      setStatus("✔ 一致しました！", "ok");
       playSound("success");
     } else {
-      setStatus(
-        "❌ 不一致です（一致部分が短すぎます）",
-        "ng"
-      );
-
+      setStatus("❌ 不一致です", "ng");
       playSound("error");
     }
 
+    // 履歴には読み取った元データを保存
     saveResult(
       firstCode1,
-      code,
+      secondCode,
       ok ? "OK" : "NG"
     );
 
@@ -444,7 +376,7 @@ function handleScan(code) {
   }
 }
 
-/* ===== 履歴保存 ===== */
+/* ===== DB保存 ===== */
 function saveResult(first, second, result) {
   if (!db) {
     console.error("データベースが準備できていません");
@@ -459,10 +391,6 @@ function saveResult(first, second, result) {
     second,
     result
   });
-
-  tx.onerror = () => {
-    console.error("検品履歴の保存に失敗しました");
-  };
 }
 
 /* ===== 履歴表示 ===== */
@@ -478,28 +406,25 @@ function loadHistory() {
 
     const header = document.createElement("tr");
 
-    ["時刻", "1回目", "2回目", "結果"].forEach(text => {
+    ["時刻", "1回目", "2回目", "結果"].forEach(label => {
       const th = document.createElement("th");
-      th.textContent = text;
+      th.textContent = label;
       header.appendChild(th);
     });
 
     table.appendChild(header);
 
-    request.result
-      .reverse()
-      .slice(0, 5)
-      .forEach(r => {
-        const tr = document.createElement("tr");
+    request.result.reverse().slice(0, 5).forEach(r => {
+      const tr = document.createElement("tr");
 
-        [r.time, r.first, r.second, r.result].forEach(value => {
-          const td = document.createElement("td");
-          td.textContent = value;
-          tr.appendChild(td);
-        });
-
-        table.appendChild(tr);
+      [r.time, r.first, r.second, r.result].forEach(value => {
+        const td = document.createElement("td");
+        td.textContent = value;
+        tr.appendChild(td);
       });
+
+      table.appendChild(tr);
+    });
   };
 }
 
@@ -509,6 +434,7 @@ function resetAll() {
 
   step = 1;
   firstCode1 = "";
+  firstCodeNormalized = "";
   detected = false;
 
   setStatus("現品票のQRを読み込んでください");
@@ -525,10 +451,10 @@ function exportCSV() {
   const request = tx.objectStore("checks").getAll();
 
   request.onsuccess = () => {
+    let csv = "時刻,1回目,2回目,結果\n";
+
     const escapeCSV = value =>
       '"' + String(value ?? "").replace(/"/g, '""') + '"';
-
-    let csv = "時刻,1回目,2回目,結果\n";
 
     request.result.forEach(r => {
       csv += [
@@ -561,11 +487,7 @@ document.getElementById("scanBtn").onclick = async () => {
     await initAudio();
     await scan();
   } catch (err) {
-    setStatus(
-      "初期化に失敗しました。音声ファイルを確認してください",
-      "ng"
-    );
-
+    setStatus("初期化に失敗しました。音声ファイルを確認してください", "ng");
     console.error(err);
   }
 };
