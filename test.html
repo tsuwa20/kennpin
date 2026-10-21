@@ -413,8 +413,8 @@ function handleScan(code) {
       normalizedSecond
     );
 
-    // 5文字以上の連続一致を合格条件とする
-    const MIN_MATCH_LENGTH = 5;
+    // 10文字以上の連続一致を合格条件とする
+    const MIN_MATCH_LENGTH = 10;
 
     const ok = commonPart.length >= MIN_MATCH_LENGTH;
 
