@@ -218,7 +218,9 @@ async function initAudio() {
       const response = await fetch(files[key]);
 
       if (!response.ok) {
-        throw new Error("音声ファイルを読み込めません: " + files[key]);
+        throw new Error(
+          "音声ファイルを読み込めません: " + files[key]
+        );
       }
 
       const arrayBuffer = await response.arrayBuffer();
@@ -279,7 +281,7 @@ const dbPromise = new Promise((resolve, reject) => {
       dbReady = false;
     };
 
-    loadHistory();
+    loadHistory().catch(console.error);
     resolve(db);
   };
 
@@ -335,7 +337,6 @@ async function scan() {
     await video.play();
 
     scanning = true;
-
     requestAnimationFrame(scanLoop);
 
   } catch (err) {
@@ -426,17 +427,15 @@ function stopCamera() {
   video.srcObject = null;
 }
 
-/* ===== 照合用文字列の作成 ===== */
+/* ===== 照合用文字列の抽出 ===== */
 function makeCompareCode(code) {
-  // QRコード末尾に付いた空白・改行を除去
-  const normalized = code.replace(/\s+$/, "");
-
-  // 最後の5文字を除いた部分を返す
-  if (normalized.length <= 5) {
+  // 28文字目～50文字目を抽出
+  // substringは0始まりなので (27, 50)
+  if (code.length < 50) {
     return null;
   }
 
-  return normalized.slice(0, -5);
+  return code.substring(27, 50);
 }
 
 /* ===== QR判定 ===== */
@@ -464,20 +463,21 @@ async function handleScan(code) {
 
     updateDisplay();
 
+    // 1枚目と2枚目の28～50文字目を抽出
     const firstCompare = makeCompareCode(firstCode);
     const secondCompare = makeCompareCode(secondCode);
 
-    // 末尾5文字を除いた部分が一致するか判定
+    // 両方の抽出結果が有効で、完全一致した場合のみOK
     const ok =
       firstCompare !== null &&
       secondCompare !== null &&
       firstCompare === secondCompare;
 
     if (ok) {
-      setStatus("✔ QRコード一致（末尾5文字を除いて照合）", "ok");
+      setStatus("✔ QRコード一致（28～50文字目）", "ok");
       playSound("success");
     } else {
-      setStatus("❌ QRコード不一致（末尾5文字を除いて照合）", "ng");
+      setStatus("❌ QRコード不一致（28～50文字目）", "ng");
       playSound("error");
     }
 
@@ -491,6 +491,7 @@ async function handleScan(code) {
       await loadHistory();
     } catch (err) {
       console.error("検品結果の保存エラー:", err);
+
       setStatus(
         (ok ? "✔ QRコード一致" : "❌ QRコード不一致") +
         "（履歴保存失敗）",
@@ -582,6 +583,7 @@ function resetAll() {
   secondCode = "";
 
   updateDisplay();
+
   setStatus("1枚目のQRコードを読み込んでください");
 
   stopCamera();
@@ -598,7 +600,6 @@ async function exportCSV() {
     request.onsuccess = () => {
       const records = request.result;
 
-      // Excelで開く場合の文字化け対策としてBOMを付加
       const rows = [
         ["時刻", "1枚目", "2枚目", "結果"],
         ...records.map(record => [
@@ -652,10 +653,12 @@ document.getElementById("scanBtn").onclick = async () => {
     await initAudio();
   } catch (err) {
     console.error(err);
+
     alert(
       "初期化に失敗しました。音声ファイルや保存先を確認してください。\n" +
       err.message
     );
+
     return;
   }
 
