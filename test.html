@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -7,14 +6,15 @@
 <link rel="manifest" href="manifest.webmanifest">
 
 <meta charset="UTF-8" />
-<title>QRコード検品</title>
+<title>現品票検品</title>
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 
 <style>
 body {
-  font-family: -apple-system, BlinkMacSystemFont, sans-serif;
+  font-family: -apple-system, BlinkMacSystemFont;
   padding: 20px;
   margin-bottom: 80px;
+  background-color: #ffe4e9;
 }
 
 #status {
@@ -26,9 +26,20 @@ body {
   margin-bottom: 20px;
 }
 
-.ok { background: green; color: white; }
-.ng { background: red; color: white; }
-.normal { background: #e5e5e5; color: #0066cc; }
+.ok {
+  background: green;
+  color: white;
+}
+
+.ng {
+  background: red;
+  color: white;
+}
+
+.normal {
+  background: #e5e5e5;
+  color: #0066cc;
+}
 
 button {
   width: 100%;
@@ -47,7 +58,7 @@ table {
 th, td {
   border-bottom: 1px solid #ddd;
   padding: 6px;
-  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
 #video-container {
@@ -72,7 +83,15 @@ video {
   transform: translate(-50%, -50%);
   pointer-events: none;
   border-radius: 10px;
-  box-sizing: border-box;
+}
+
+.info-box {
+  margin-top: 15px;
+  padding: 10px;
+  background: #f5f5f5;
+  border-radius: 10px;
+  font-size: 14px;
+  word-break: break-all;
 }
 
 .navbar {
@@ -105,10 +124,10 @@ video {
 
 <body>
 
-<h2>QRコード検品</h2>
+<h2>現品票検品</h2>
 
 <div id="status" class="normal">
-  現品票のQRを読み込んでください
+1枚目のQRコードを読み込んでください
 </div>
 
 <div id="video-container">
@@ -116,51 +135,58 @@ video {
   <div id="scan-frame"></div>
 </div>
 
+<div class="info-box">
+  <div><b>1枚目:</b> <span id="firstDisplay">未読込</span></div>
+  <div><b>2枚目:</b> <span id="secondDisplay">未読込</span></div>
+</div>
+
 <button id="scanBtn">📷 QRコードを読み取る</button>
 <button id="resetBtn">🔄 最初に戻る</button>
 <button id="exportBtn">📁 CSV出力</button>
 
 <h3>履歴</h3>
-<table id="history"></table>
+
+<table id="history">
+  <tr>
+    <th>時刻</th>
+    <th>1枚目</th>
+    <th>2枚目</th>
+    <th>結果</th>
+  </tr>
+</table>
 
 <div class="navbar">
-  <a href="index.html" class="active">📷 QR検品</a>
+  <a href="index.html">📷 QR検品</a>
   <a href="tenyuryoku.html">⌨ 手入力検品</a>
   <a href="scan.html">🏷️ 海外ラベル</a>
-  <a href="gennpin.html">🎟️ 現品票検品</a>
+  <a href="gennpin.html" class="active">🎟️ 現品票検品</a>
 </div>
 
 <script src="js/jsQR.js"></script>
 
 <script>
+/* ===== 状態管理 ===== */
 let step = 1;
-
-// 1回目のQRコード（元データ）
-let firstCode1 = "";
-
-// 1回目のQRコード（空白除去後）
-let firstCodeNormalized = "";
+let firstCode = "";
+let secondCode = "";
 
 let scanning = false;
 let detected = false;
 
-/* ===== AudioContext管理 ===== */
+/* ===== Audio ===== */
 let audioCtx;
 let soundBuffers = {};
 let audioReady = false;
 
 async function initAudio() {
+
   if (!audioCtx) {
-    audioCtx = new (
-      window.AudioContext || window.webkitAudioContext
-    )();
+    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
   }
 
   if (audioCtx.state === "suspended") {
     await audioCtx.resume();
   }
-
-  if (audioReady) return;
 
   const files = {
     read: "sounds/yomitori.mp3",
@@ -170,20 +196,15 @@ async function initAudio() {
 
   for (const key in files) {
     const res = await fetch(files[key]);
-
-    if (!res.ok) {
-      throw new Error("音声ファイルの読み込みに失敗: " + files[key]);
-    }
-
     const arrayBuffer = await res.arrayBuffer();
-    soundBuffers[key] =
-      await audioCtx.decodeAudioData(arrayBuffer);
+    soundBuffers[key] = await audioCtx.decodeAudioData(arrayBuffer);
   }
 
   audioReady = true;
 }
 
 function playSound(type) {
+
   if (!audioReady || !soundBuffers[type]) return;
 
   const src = audioCtx.createBufferSource();
@@ -199,13 +220,10 @@ const req = indexedDB.open("checksDB", 1);
 
 req.onupgradeneeded = e => {
   db = e.target.result;
-
-  if (!db.objectStoreNames.contains("checks")) {
-    db.createObjectStore("checks", {
-      keyPath: "id",
-      autoIncrement: true
-    });
-  }
+  db.createObjectStore("checks", {
+    keyPath: "id",
+    autoIncrement: true
+  });
 };
 
 req.onsuccess = e => {
@@ -213,26 +231,33 @@ req.onsuccess = e => {
   loadHistory();
 };
 
-req.onerror = () => {
-  setStatus("履歴データベースを開けません", "ng");
-};
-
+/* ===== UI ===== */
 function setStatus(text, type = "normal") {
   const s = document.getElementById("status");
   s.textContent = text;
   s.className = type;
 }
 
+function updateDisplay() {
+  document.getElementById("firstDisplay").textContent =
+    firstCode || "未読込";
+
+  document.getElementById("secondDisplay").textContent =
+    secondCode || "未読込";
+}
+
+/* ===== カメラ ===== */
 const video = document.getElementById("v");
 
-/* ===== カメラ起動 ===== */
 async function scan() {
+
   if (scanning) return;
 
   scanning = true;
   detected = false;
 
   try {
+
     const stream = await navigator.mediaDevices.getUserMedia({
       video: {
         facingMode: { ideal: "environment" },
@@ -242,40 +267,28 @@ async function scan() {
       }
     });
 
-    if (!scanning) {
-      stream.getTracks().forEach(t => t.stop());
-      return;
-    }
-
     video.srcObject = stream;
-    await video.play();
 
     requestAnimationFrame(scanLoop);
 
   } catch (err) {
-    scanning = false;
-    setStatus("カメラを起動できません。設定を確認してください", "ng");
-    console.error(err);
+
+    alert("カメラ起動失敗: " + err);
+
   }
 }
 
-/* ===== スキャン ===== */
 function scanLoop() {
+
   if (!scanning || detected) return;
 
-  if (!video.videoWidth || !video.videoHeight) {
-    requestAnimationFrame(scanLoop);
-    return;
-  }
-
-  const frame = document.getElementById("scan-frame")
-    .getBoundingClientRect();
-
+  const frame = document.getElementById("scan-frame").getBoundingClientRect();
   const rect = video.getBoundingClientRect();
 
   const canvas = document.createElement("canvas");
-  canvas.width = Math.round(frame.width);
-  canvas.height = Math.round(frame.height);
+
+  canvas.width = frame.width;
+  canvas.height = frame.height;
 
   const ctx = canvas.getContext("2d");
 
@@ -288,25 +301,33 @@ function scanLoop() {
     (frame.top - rect.top) * scaleY,
     frame.width * scaleX,
     frame.height * scaleY,
-    0, 0, canvas.width, canvas.height
+    0,
+    0,
+    canvas.width,
+    canvas.height
   );
 
-  const img = ctx.getImageData(
-    0, 0, canvas.width, canvas.height
-  );
+  const img = ctx.getImageData(0, 0, canvas.width, canvas.height);
 
   const qr = jsQR(img.data, canvas.width, canvas.height);
 
   if (qr) {
+
     detected = true;
+
     stopCamera();
+
     handleScan(qr.data);
+
   } else {
+
     requestAnimationFrame(scanLoop);
+
   }
 }
 
 function stopCamera() {
+
   scanning = false;
 
   if (video.srcObject) {
@@ -316,96 +337,76 @@ function stopCamera() {
   video.srcObject = null;
 }
 
-/* ===== 空白除去 ===== */
-function normalizeCode(code) {
-  // 半角スペース、全角スペース、タブ、改行などを除去
-  return code.replace(/\s/g, "");
-}
-
-
-/* ===== 判定 ===== */
+/* ===== QR判定 ===== */
 function handleScan(code) {
+
   playSound("read");
 
+  /* ===== 1枚目 ===== */
   if (step === 1) {
-    // 1回目：現品票のQRコードを読み取る
-    if (code.length < 29) {
-      setStatus("バーコードが短すぎます", "ng");
-      playSound("error");
-      return;
-    }
 
-    // 元データを保存
-    firstCode1 = code;
+    firstCode = code;
 
-    // 空白をすべて除去したデータを作成
-    firstCodeNormalized = normalizeCode(code);
+    updateDisplay();
 
-    setStatus("パーツラベルのQRコードを読んでください");
+    setStatus("基準QR登録完了。2枚目のQRコードを読み込んでください");
+
     step = 2;
+
     return;
   }
 
+  /* ===== 2枚目 ===== */
   if (step === 2) {
-    // 2回目のQRコード全体から空白を除去
-    const secondCodeNormalized = normalizeCode(code);
 
-    // 1回目と2回目の全データが同じか判定
-    const duplicate =
-      firstCodeNormalized === secondCodeNormalized;
+    secondCode = code;
 
-    if (duplicate) {
-      // 重複エラー
-      setStatus("⚠ 重複エラーです", "ng");
-      playSound("error");
+    updateDisplay();
 
-      saveResult(
-        firstCode1,
-        code,
-        "重複"
-      );
+   // 両方のQRコードの最後の5桁を除いて比較
+const firstCompare = firstCode.slice(0, -5);
+const secondCompare = secondCode.slice(0, -5);
 
-      loadHistory();
-      return;
-    }
-
-    // 2回目：34文字目以降を取得
-    const secondCode = code.substring(33);
-
-    // 取得部分から空白をすべて除去
-    const secondPartNormalized = normalizeCode(secondCode);
-
-    // 1回目のデータに含まれるか判定
-    const ok =
-      secondPartNormalized.length > 0 &&
-      firstCodeNormalized.includes(secondPartNormalized);
-
+const ok = firstCompare === secondCompare;
+    
     if (ok) {
-      setStatus("✔ 一致しました！", "ok");
+
+      setStatus("✔ QRコード一致", "ok");
+
       playSound("success");
+
     } else {
-      setStatus("❌ 不一致です", "ng");
+
+      setStatus("❌ QRコード不一致", "ng");
+
       playSound("error");
     }
 
-    // 履歴に保存
     saveResult(
-      firstCode1,
+      firstCode,
       secondCode,
       ok ? "OK" : "NG"
     );
 
     loadHistory();
+
+/* 次回も同じ1枚目を使用 */
+setTimeout(() => {
+
+  secondCode = "";
+
+  updateDisplay();
+
+  setStatus("続けてQRコードを読み込んでください");
+
+  step = 2;
+
+}, 1500);
   }
 }
 
-
 /* ===== DB保存 ===== */
 function saveResult(first, second, result) {
-  if (!db) {
-    console.error("データベースが準備できていません");
-    return;
-  }
 
   const tx = db.transaction("checks", "readwrite");
 
@@ -417,120 +418,106 @@ function saveResult(first, second, result) {
   });
 }
 
-/* ===== 履歴表示 ===== */
+/* ===== 履歴 ===== */
 function loadHistory() {
-  if (!db) return;
 
   const tx = db.transaction("checks", "readonly");
-  const request = tx.objectStore("checks").getAll();
 
-  request.onsuccess = () => {
+  const req = tx.objectStore("checks").getAll();
+
+  req.onsuccess = () => {
+
     const table = document.getElementById("history");
-    table.replaceChildren();
 
-    const header = document.createElement("tr");
+    table.innerHTML = `
+      <tr>
+        <th>時刻</th>
+        <th>1枚目</th>
+        <th>2枚目</th>
+        <th>結果</th>
+      </tr>
+    `;
 
-    ["時刻", "1回目", "2回目", "結果"].forEach(label => {
-      const th = document.createElement("th");
-      th.textContent = label;
-      header.appendChild(th);
-    });
+    req.result.reverse().slice(0, 10).forEach(r => {
 
-    table.appendChild(header);
-
-    request.result.reverse().slice(0, 5).forEach(r => {
-      const tr = document.createElement("tr");
-
-      [r.time, r.first, r.second, r.result].forEach(value => {
-        const td = document.createElement("td");
-        td.textContent = value;
-        tr.appendChild(td);
-      });
-
-      table.appendChild(tr);
+      table.innerHTML += `
+        <tr>
+          <td>${r.time}</td>
+          <td>${r.first}</td>
+          <td>${r.second}</td>
+          <td>${r.result}</td>
+        </tr>
+      `;
     });
   };
 }
 
 /* ===== リセット ===== */
 function resetAll() {
-  stopCamera();
 
   step = 1;
-  firstCode1 = "";
-  firstCodeNormalized = "";
-  detected = false;
 
-  setStatus("現品票のQRを読み込んでください");
+  firstCode = "";
+  secondCode = "";
+
+  updateDisplay();
+
+  setStatus("1枚目のQRコードを読み込んでください");
+
+  stopCamera();
 }
 
-/* ===== CSV出力 ===== */
+/* ===== CSV ===== */
 function exportCSV() {
-  if (!db) {
-    setStatus("データベースが準備できていません", "ng");
-    return;
-  }
 
   const tx = db.transaction("checks", "readonly");
-  const request = tx.objectStore("checks").getAll();
 
-  request.onsuccess = () => {
-    let csv = "時刻,1回目,2回目,結果\n";
+  const req = tx.objectStore("checks").getAll();
 
-    const escapeCSV = value =>
-      '"' + String(value ?? "").replace(/"/g, '""') + '"';
+  req.onsuccess = () => {
 
-    request.result.forEach(r => {
-      csv += [
-        r.time,
-        r.first,
-        r.second,
-        r.result
-      ].map(escapeCSV).join(",") + "\n";
+    let csv = "時刻,1枚目,2枚目,結果\n";
+
+    req.result.forEach(r => {
+
+      csv += `${r.time},${r.first},${r.second},${r.result}\n`;
+
     });
 
-    const blob = new Blob(
-      ["\uFEFF" + csv],
-      { type: "text/csv;charset=utf-8;" }
-    );
+    const blob = new Blob([csv], {
+      type: "text/csv"
+    });
 
-    const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
 
-    a.href = url;
-    a.download = "検品履歴.csv";
-    a.click();
+    a.href = URL.createObjectURL(blob);
 
-    setTimeout(() => URL.revokeObjectURL(url), 1000);
+    a.download = "QR照合履歴.csv";
+
+    a.click();
   };
 }
 
-/* ===== イベント ===== */
-document.getElementById("scanBtn").onclick = async () => {
-  try {
-    await initAudio();
-    await scan();
-  } catch (err) {
-    setStatus("初期化に失敗しました。音声ファイルを確認してください", "ng");
-    console.error(err);
-  }
+/* ===== ボタン ===== */
+scanBtn.onclick = async () => {
+
+  await initAudio();
+
+  scan();
 };
 
-document.getElementById("resetBtn").onclick = resetAll;
-document.getElementById("exportBtn").onclick = exportCSV;
+resetBtn.onclick = resetAll;
 
-/* ===== スリープ復帰対策 ===== */
+exportBtn.onclick = exportCSV;
+
+/* ===== スリープ復帰 ===== */
 document.addEventListener("visibilitychange", async () => {
+
   if (document.visibilityState === "visible") {
-    if (audioCtx && audioCtx.state === "suspended") {
-      try {
-        await audioCtx.resume();
-      } catch (err) {
-        console.error(err);
-      }
-    }
-  } else {
-    stopCamera();
+
+    audioReady = false;
+
+    await initAudio();
   }
 });
 </script>
