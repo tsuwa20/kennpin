@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="ja">
 <head>
@@ -48,6 +47,10 @@ button {
   padding: 15px;
   margin-top: 10px;
   border-radius: 10px;
+}
+
+button:disabled {
+  opacity: 0.5;
 }
 
 table {
@@ -150,7 +153,7 @@ video {
   <div><b>2枚目:</b> <span id="secondDisplay">未読込</span></div>
 </div>
 
-<button id="scanBtn">📷 QRコードを読み取る</button>
+<button id="scanBtn">📷 1枚目のQRコードを読み取る</button>
 <button id="resetBtn">🔄 最初に戻る</button>
 <button id="exportBtn">📁 CSV出力</button>
 
@@ -305,6 +308,25 @@ function updateDisplay() {
     secondCode || "未読込";
 }
 
+/* ===== ボタン表示変更 ===== */
+function updateScanButton() {
+  const btn = document.getElementById("scanBtn");
+
+  if (scanning || scanStarting) {
+    btn.textContent = "📷 読み取り中...";
+    btn.disabled = true;
+    return;
+  }
+
+  btn.disabled = false;
+
+  if (step === 1) {
+    btn.textContent = "📷 1枚目のQRコードを読み取る";
+  } else {
+    btn.textContent = "📷 2枚目のQRコードを読み取る";
+  }
+}
+
 /* ===== カメラ ===== */
 const video = document.getElementById("v");
 
@@ -314,12 +336,20 @@ async function scan() {
   scanStarting = true;
   detected = false;
 
+  updateScanButton();
+
   try {
     if (!navigator.mediaDevices ||
         !navigator.mediaDevices.getUserMedia) {
       throw new Error(
         "カメラを利用できません。HTTPS接続を確認してください。"
       );
+    }
+
+    // 次の2枚目を読み取る場合は前回の表示をクリア
+    if (step === 2) {
+      secondCode = "";
+      updateDisplay();
     }
 
     const stream = await navigator.mediaDevices.getUserMedia({
@@ -337,13 +367,19 @@ async function scan() {
     await video.play();
 
     scanning = true;
+
+    updateScanButton();
+
     requestAnimationFrame(scanLoop);
 
   } catch (err) {
     stopCamera();
+
     alert("カメラ起動失敗: " + err.message);
+
   } finally {
     scanStarting = false;
+    updateScanButton();
   }
 }
 
@@ -408,8 +444,11 @@ function scanLoop() {
 
   if (qr && qr.data) {
     detected = true;
+
     stopCamera();
+
     handleScan(qr.data);
+
   } else {
     requestAnimationFrame(scanLoop);
   }
@@ -442,75 +481,79 @@ function makeCompareCode(code) {
 async function handleScan(code) {
   playSound("read");
 
-  /* ===== 1枚目 ===== */
-  if (step === 1) {
-    firstCode = code;
-    secondCode = "";
+  try {
 
-    updateDisplay();
-
-    setStatus(
-      "基準QR登録完了。2枚目のQRコードを読み込んでください"
-    );
-
-    step = 2;
-    return;
-  }
-
-  /* ===== 2枚目 ===== */
-  if (step === 2) {
-    secondCode = code;
-
-    updateDisplay();
-
-    // 1枚目と2枚目の28～50文字目を抽出
-    const firstCompare = makeCompareCode(firstCode);
-    const secondCompare = makeCompareCode(secondCode);
-
-    // 両方の抽出結果が有効で、完全一致した場合のみOK
-    const ok =
-      firstCompare !== null &&
-      secondCompare !== null &&
-      firstCompare === secondCompare;
-
-    if (ok) {
-      setStatus("✔ QRコード一致（28～50文字目）", "ok");
-      playSound("success");
-    } else {
-      setStatus("❌ QRコード不一致（28～50文字目）", "ng");
-      playSound("error");
-    }
-
-    try {
-      await saveResult(
-        firstCode,
-        secondCode,
-        ok ? "OK" : "NG"
-      );
-
-      await loadHistory();
-    } catch (err) {
-      console.error("検品結果の保存エラー:", err);
-
-      setStatus(
-        (ok ? "✔ QRコード一致" : "❌ QRコード不一致") +
-        "（履歴保存失敗）",
-        ok ? "ok" : "ng"
-      );
-    }
-
-    /* 次回も同じ1枚目を使用 */
-    setTimeout(() => {
+    /* ===== 1枚目 ===== */
+    if (step === 1) {
+      firstCode = code;
       secondCode = "";
 
       updateDisplay();
 
       setStatus(
-        "続けて検品できます。「QRコードを読み取る」を押してください"
+        "基準QR登録完了。2枚目のQRコードを読み込んでください"
       );
 
       step = 2;
-    }, 1500);
+
+      return;
+    }
+
+    /* ===== 2枚目 ===== */
+    if (step === 2) {
+      secondCode = code;
+
+      updateDisplay();
+
+      // 1枚目と2枚目の28～50文字目を抽出
+      const firstCompare = makeCompareCode(firstCode);
+      const secondCompare = makeCompareCode(secondCode);
+
+      // 両方の抽出結果が有効で、完全一致した場合のみOK
+      const ok =
+        firstCompare !== null &&
+        secondCompare !== null &&
+        firstCompare === secondCompare;
+
+      if (ok) {
+        setStatus("✔ QRコード一致（28～50文字目）", "ok");
+        playSound("success");
+      } else {
+        setStatus("❌ QRコード不一致（28～50文字目）", "ng");
+        playSound("error");
+      }
+
+      try {
+        await saveResult(
+          firstCode,
+          secondCode,
+          ok ? "OK" : "NG"
+        );
+
+        await loadHistory();
+
+      } catch (err) {
+        console.error("検品結果の保存エラー:", err);
+
+        setStatus(
+          (ok ? "✔ QRコード一致" : "❌ QRコード不一致") +
+          "（履歴保存失敗）",
+          ok ? "ok" : "ng"
+        );
+      }
+
+      /*
+       * 次回も同じ1枚目を使用する
+       * 1.5秒後の自動処理は行わない
+       * 次の読み取りはボタンを押したときに開始する
+       */
+
+      step = 2;
+
+    }
+
+  } finally {
+    updateScanButton();
   }
 }
 
@@ -582,11 +625,13 @@ function resetAll() {
   firstCode = "";
   secondCode = "";
 
+  stopCamera();
+
   updateDisplay();
 
   setStatus("1枚目のQRコードを読み込んでください");
 
-  stopCamera();
+  updateScanButton();
 }
 
 /* ===== CSV ===== */
@@ -679,8 +724,12 @@ document.addEventListener("visibilitychange", async () => {
     } catch (err) {
       console.error("音声復帰エラー:", err);
     }
+
+    updateScanButton();
+
   } else {
     stopCamera();
+    updateScanButton();
   }
 });
 
@@ -691,6 +740,10 @@ if ("serviceWorker" in navigator) {
       console.error("Service Worker登録エラー:", err);
     });
 }
+
+// 初期ボタン表示
+updateScanButton();
+
 </script>
 
 </body>
